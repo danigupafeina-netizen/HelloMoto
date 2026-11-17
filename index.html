@@ -6,8 +6,7 @@
 <title>Llamada roomscape</title>
 <style>
 :root{--bg:#f2f2f5;--fg:#16161a;--card:#fff;--mut:#6b6b76;--ok:#2fb344;--no:#e5484d;--ac:#3b5bdb;color-scheme:light dark}
-@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#121216;--fg:#f2f2f5;--card:#1c1c22;--mut:#9a9aa6}}
-:root[data-theme="dark"]{--bg:#121216;--fg:#f2f2f5;--card:#1c1c22;--mut:#9a9aa6}
+@media (prefers-color-scheme:dark){:root{--bg:#121216;--fg:#f2f2f5;--card:#1c1c22;--mut:#9a9aa6}}
 :root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
 *{box-sizing:border-box}
 html,body{height:100%;margin:0}
@@ -36,15 +35,19 @@ button.sec{background:var(--mut)}
 @media (prefers-reduced-motion:reduce){.rb.ok{animation:none}}
 #big{height:46vh;font-size:1.8rem;background:var(--ok);border-radius:28px}
 </style>
+<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
 </head>
 <body>
 
 <section id="start" class="screen on">
   <div class="card">
     <h1>Llamada para el roomscape</h1>
-    <p>Abre esta misma página en los dos dispositivos, con la misma cuenta de Claude. Elige el papel de cada uno.</p>
+    <p>Abre esta página en los dos dispositivos y elige el papel de cada uno. Se enlazan solos con el mismo código.</p>
+    <label for="code">Código de la sala</label>
+    <input id="code" type="text" value="hellomoto2026" autocapitalize="off" autocomplete="off">
     <button id="pickTablet">Esta es la tablet (la que suena)</button>
     <button id="pickRemote" class="sec">Este es mi móvil (el mando)</button>
+    <p class="hint" style="margin-top:14px">Atajos: añade <b>#tablet</b> o <b>#mando</b> al final de la dirección para saltarte este paso.</p>
   </div>
 </section>
 
@@ -94,41 +97,75 @@ button.sec{background:var(--mut)}
 const $=id=>document.getElementById(id);
 function show(id){document.querySelectorAll('.screen').forEach(s=>s.classList.remove('on'));$(id).classList.add('on')}
 const safe=async f=>{try{return await f()}catch(e){return null}};
+const PID=()=>'hmoto-'+($('code').value||'sala').toLowerCase().replace(/[^a-z0-9]/g,'');
 
-let room=null, role=null;
-claude.use("room").then(r=>{room=r;if(room)wire()}).catch(()=>{});
+let ringURL=null,vozURL=null,ac=null,ringTimer=null,ringAudio=null,vozAudio=null,testing=false,armed=false,inCall=false,wake=null;
 
-let ringURL=null, vozURL=null, ac=null, ringTimer=null, ringAudio=null, vozAudio=null, testing=false, armed=false, inCall=false, wake=null;
+/* ---------- TABLET: recibe órdenes ---------- */
+let tpeer=null, link=null;
+function send(o){try{if(link&&link.open)link.send(o)}catch(e){}}
+const tell=s=>send({state:s});
 
-$('pickTablet').onclick=()=>{role='tablet';show('setup');wire()};
-$('pickRemote').onclick=()=>{role='remote';show('remote');wire()};
+function startTablet(){
+  if(typeof Peer==='undefined'){$('conn').textContent='No se pudo cargar la conexión. Revisa internet y recarga.';return}
+  tpeer=new Peer(PID());
+  tpeer.on('open',()=>{$('conn').textContent='Esperando al mando…'});
+  tpeer.on('connection',c=>{
+    link=c;
+    c.on('open',()=>{$('conn').textContent='Mando conectado.';send({state:armed?'ready':'notready'})});
+    c.on('data',d=>{
+      if(!d)return;
+      if(d.cmd==='ring'){ if(!armed){send({state:'notready'});return} if(!inCall)startCall() }
+      if(d.cmd==='stop'&&inCall)endCall('llamada finalizada');
+    });
+    c.on('close',()=>{$('conn').textContent='Mando desconectado. Esperando…'});
+  });
+  tpeer.on('disconnected',()=>{try{tpeer.reconnect()}catch(e){}});
+  tpeer.on('error',e=>{
+    if(e.type==='unavailable-id'){$('conn').textContent='Ya hay otra tablet con este código. Cambia el código o cierra la otra.';return}
+    setTimeout(()=>{try{tpeer.destroy()}catch(_){};startTablet()},3000);
+  });
+}
 
-let wired=false, lastTablet=false;
-function wire(){
-  if(!room||!role||wired)return; wired=true;
-  if(role==='tablet'){
-    room.on('ring',()=>{if(armed&&!inCall)startCall()},()=>{});
-    room.on('stop',()=>{if(inCall)endCall('llamada finalizada')},()=>{});
-    room.onConnection(c=>{$('conn').textContent=c?'Conectada con el mando.':'Sin conexión con el mando. Puedes usar el plan B.'},()=>{});
-  } else {
-    room.onPeers(ch=>{
-      lastTablet=ch.peers.some(p=>!p.isMe&&p.presence&&p.presence.role==='tablet'&&p.presence.armed);
-      $('tabInfo').textContent=lastTablet?'Tablet lista y conectada.':'La tablet aún no está lista. Pulsa «Dejar lista» en ella.';
-    },()=>{});
-    room.on('status',m=>{
-      const s=m.data&&m.data.state;
-      $('status').textContent=s==='ringing'?'Sonando…':s==='answered'?'Han contestado. Reproduciendo audio.':s==='declined'?'Han rechazado. Volverá a sonar.':s==='ended'?'Llamada terminada.':'';
-    },()=>{});
-  }
+/* ---------- MANDO: envía órdenes ---------- */
+let rpeer=null, rconn=null, rtimer=null;
+function startRemote(){
+  if(typeof Peer==='undefined'){$('tabInfo').textContent='No se pudo cargar la conexión. Revisa internet y recarga.';return}
+  rpeer=new Peer();
+  rpeer.on('open',()=>{tryConnect();rtimer=setInterval(()=>{if(!(rconn&&rconn.open))tryConnect()},3000)});
+  rpeer.on('disconnected',()=>{try{rpeer.reconnect()}catch(e){}});
+  rpeer.on('error',()=>{});
+}
+function tryConnect(){
+  if(!rpeer||rpeer.disconnected||rpeer.destroyed)return;
+  const c=rpeer.connect(PID(),{reliable:true});
+  c.on('open',()=>{rconn=c;$('tabInfo').textContent='Tablet conectada.'});
+  c.on('data',d=>{
+    const s=d&&d.state;
+    if(s==='ready')$('tabInfo').textContent='Tablet lista.';
+    if(s==='notready'){$('tabInfo').textContent='Tablet conectada, pero falta pulsar «Dejar lista».';$('status').textContent='La tablet no está lista.'}
+    if(s==='ringing')$('status').textContent='Sonando…';
+    if(s==='answered')$('status').textContent='Han contestado. Reproduciendo audio.';
+    if(s==='declined')$('status').textContent='Han rechazado. Volverá a sonar.';
+    if(s==='ended')$('status').textContent='Llamada terminada.';
+  });
+  c.on('close',()=>{if(rconn===c){rconn=null;$('tabInfo').textContent='Buscando la tablet…'}});
 }
 $('big').onclick=()=>{
-  if(!room){$('status').textContent='Sin conexión. Recarga la página.';return}
-  room.emit('ring',{t:Date.now()}).catch(()=>{});
-  $('status').textContent='Orden enviada…';
+  if(rconn&&rconn.open){rconn.send({cmd:'ring'});$('status').textContent='Orden enviada…'}
+  else $('status').textContent='La tablet no está conectada todavía.';
 };
-$('stopBtn').onclick=()=>{if(room)room.emit('stop',{t:Date.now()}).catch(()=>{})};
-const tell=s=>{if(room)room.emit('status',{state:s}).catch(()=>{})};
+$('stopBtn').onclick=()=>{if(rconn&&rconn.open)rconn.send({cmd:'stop'})};
 
+/* ---------- selección de papel ---------- */
+function pickTablet(){show('setup');startTablet()}
+function pickRemote(){show('remote');startRemote()}
+$('pickTablet').onclick=pickTablet;
+$('pickRemote').onclick=pickRemote;
+if(location.hash==='#tablet')pickTablet();
+if(location.hash==='#mando')pickRemote();
+
+/* ---------- llamada ---------- */
 $('voz').onchange=e=>{const f=e.target.files[0];vozURL=f?URL.createObjectURL(f):null;$('arm').disabled=!vozURL};
 $('ring').onchange=e=>{const f=e.target.files[0];ringURL=f?URL.createObjectURL(f):null};
 
@@ -159,7 +196,7 @@ function startCall(){
 }
 function endCall(msg){
   stopRing();
-  if(vozAudio){vozAudio.pause()}
+  if(vozAudio)vozAudio.pause();
   $('btns').style.display='none';$('callSub').textContent=msg;
   tell('ended');
   setTimeout(()=>{inCall=false;testing?show('setup'):show('ready')},2000);
@@ -168,11 +205,11 @@ $('arm').onclick=async()=>{
   ac=ac||new (window.AudioContext||window.webkitAudioContext)();ac.resume();
   vozAudio=new Audio(vozURL);vozAudio.load();
   testing=false;armed=true;show('ready');
-  if(room)room.presence({role:'tablet',armed:true}).catch(()=>{});
+  tell('ready');
   if(document.documentElement.requestFullscreen)document.documentElement.requestFullscreen().catch(()=>{});
-  if(navigator.wakeLock){wake=await safe(()=>navigator.wakeLock.request('screen'))}
+  if(navigator.wakeLock)wake=await safe(()=>navigator.wakeLock.request('screen'));
 };
-document.addEventListener('visibilitychange',async()=>{if(armed&&document.visibilityState==='visible'&&navigator.wakeLock){wake=await safe(()=>navigator.wakeLock.request('screen'))}});
+document.addEventListener('visibilitychange',async()=>{if(armed&&document.visibilityState==='visible'&&navigator.wakeLock)wake=await safe(()=>navigator.wakeLock.request('screen'))});
 $('test').onclick=()=>{
   ac=ac||new (window.AudioContext||window.webkitAudioContext)();ac.resume();
   if(vozURL)vozAudio=new Audio(vozURL);
@@ -189,10 +226,7 @@ $('answer').onclick=()=>{
   $('btns').style.display='none';
   $('callSub').textContent='en llamada…';
   tell('answered');
-  if(vozAudio){
-    vozAudio.currentTime=0;vozAudio.play().catch(()=>{});
-    vozAudio.onended=()=>endCall('llamada finalizada');
-  }
+  if(vozAudio){vozAudio.currentTime=0;vozAudio.play().catch(()=>{});vozAudio.onended=()=>endCall('llamada finalizada')}
 };
 $('decline').onclick=()=>{
   stopRing();
