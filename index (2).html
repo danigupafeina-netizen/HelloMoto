@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Llamada roomscape</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<meta name="theme-color" content="#2fb344">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Llamada">
+<style>
+:root{--bg:#f2f2f5;--fg:#16161a;--card:#fff;--mut:#6b6b76;--ok:#2fb344;--no:#e5484d;--ac:#3b5bdb;color-scheme:light dark}
+@media (prefers-color-scheme:dark){:root{--bg:#121216;--fg:#f2f2f5;--card:#1c1c22;--mut:#9a9aa6}}
+:root{box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.screen{display:none;min-height:100%;padding:24px;flex-direction:column;align-items:center;justify-content:center;text-align:center}
+.screen.on{display:flex}
+.card{background:var(--card);border-radius:20px;padding:24px;width:100%;max-width:440px;text-align:left}
+h1{font-size:1.4rem;margin:0 0 6px}
+p{color:var(--mut);margin:0 0 16px;line-height:1.45}
+label{display:block;font-weight:600;margin:16px 0 6px}
+input[type=text],input[type=file]{width:100%;padding:10px;border-radius:10px;border:1px solid var(--mut);background:transparent;color:var(--fg);font-size:1rem}
+button{font:inherit;border:0;border-radius:14px;padding:14px 20px;background:var(--ac);color:#fff;font-weight:600;width:100%;margin-top:14px;cursor:pointer}
+button:disabled{opacity:.4}
+button.sec{background:var(--mut)}
+.hint{font-size:.9rem}
+#status{font-weight:600;margin-top:14px;color:var(--fg)}
+#call{background:#0d0d12;color:#fff;justify-content:space-between;padding:12vh 24px 10vh}
+.avatar{width:120px;height:120px;border-radius:50%;background:#2b2b36;display:grid;place-items:center;font-size:3rem;margin:0 auto 20px}
+.name{font-size:2rem;font-weight:600}
+.sub{color:#b4b4c0;margin-top:6px}
+.btns{display:flex;gap:80px;justify-content:center}
+.rb{width:76px;height:76px;border-radius:50%;padding:0;margin:0;display:grid;place-items:center;font-size:1.8rem}
+.rb.ok{background:var(--ok);animation:pulse 1s infinite}
+.rb.no{background:var(--no)}
+@keyframes pulse{50%{transform:scale(1.1)}}
+@media (prefers-reduced-motion:reduce){.rb.ok{animation:none}}
+#big{height:46vh;font-size:1.8rem;background:var(--ok);border-radius:28px}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
+</head>
+<body>
+
+<section id="start" class="screen on">
+  <div class="card">
+    <h1>Llamada para el roomscape</h1>
+    <p>Abre esta página en los dos dispositivos y elige el papel de cada uno. Se enlazan solos con el mismo código.</p>
+    <label for="code">Código de la sala</label>
+    <input id="code" type="text" value="hellomoto2026" autocapitalize="off" autocomplete="off">
+    <button id="pickTablet">Esta es la tablet (la que suena)</button>
+    <button id="pickRemote" class="sec">Este es mi móvil (el mando)</button>
+    <p class="hint" style="margin-top:14px">Atajos: añade <b>#tablet</b> o <b>#mando</b> al final de la dirección para saltarte este paso.</p>
+  </div>
+</section>
+
+<section id="setup" class="screen">
+  <div class="card">
+    <h1>Configurar la tablet</h1>
+    <label for="nombre">Quién llama</label>
+    <input id="nombre" type="text" value="Dr. House" readonly>
+    <p class="hint">Todo lo que elijas aquí queda guardado en esta tablet. La próxima vez solo tienes que pulsar «Dejar lista».</p>
+    <label for="ring">Tono de llamada (opcional)</label>
+    <input id="ring" type="file" accept="audio/*">
+    <p class="hint" id="ringInfo"></p>
+    <label for="voz">Audio al contestar</label>
+    <input id="voz" type="file" accept="audio/*">
+    <p class="hint" id="vozInfo"></p>
+    <button id="arm" disabled>Dejar lista</button>
+    <button id="test" class="sec">Probar ahora</button>
+    <button id="clear" class="sec">Borrar lo guardado</button>
+    <button id="chrole" class="sec">Cambiar de papel</button>
+    <p id="conn" class="hint" style="margin-top:14px"></p>
+  </div>
+</section>
+
+<section id="ready" class="screen" style="background:#000">
+  <p style="color:#444">Lista. Esperando la orden del mando.<br>Plan B: toca 3 veces la esquina superior izquierda.</p>
+</section>
+
+<section id="call" class="screen">
+  <div>
+    <div class="avatar">🩺</div>
+    <div class="name" id="callName"></div>
+    <div class="sub" id="callSub">llamada entrante…</div>
+  </div>
+  <div class="btns" id="btns">
+    <button class="rb no" id="decline" aria-label="Rechazar">✕</button>
+    <button class="rb ok" id="answer" aria-label="Contestar">✆</button>
+  </div>
+</section>
+
+<section id="remote" class="screen">
+  <div class="card">
+    <h1>Mando</h1>
+    <p id="tabInfo">Buscando la tablet…</p>
+    <button id="big">Hacer sonar la tablet</button>
+    <button id="stopBtn" class="sec">Cortar llamada</button>
+    <button id="chrole2" class="sec">Cambiar de papel</button>
+    <p id="status"></p>
+  </div>
+</section>
+
+<script>
+const $=id=>document.getElementById(id);
+function show(id){document.querySelectorAll('.screen').forEach(s=>s.classList.remove('on'));$(id).classList.add('on')}
+const safe=async f=>{try{return await f()}catch(e){return null}};
+const PID=()=>'hmoto-'+($('code').value||'sala').toLowerCase().replace(/[^a-z0-9]/g,'');
+
+let ringURL=null,vozURL=null,ac=null,ringTimer=null,ringAudio=null,vozAudio=null,testing=false,armed=false,inCall=false,wake=null;
+
+/* ---------- TABLET: recibe órdenes ---------- */
+let tpeer=null, link=null;
+function send(o){try{if(link&&link.open)link.send(o)}catch(e){}}
+const tell=s=>send({state:s});
+
+function startTablet(){
+  if(typeof Peer==='undefined'){$('conn').textContent='No se pudo cargar la conexión. Revisa internet y recarga.';return}
+  tpeer=new Peer(PID());
+  tpeer.on('open',()=>{$('conn').textContent='Esperando al mando…'});
+  tpeer.on('connection',c=>{
+    link=c;
+    c.on('open',()=>{$('conn').textContent='Mando conectado.';send({state:armed?'ready':'notready'})});
+    c.on('data',d=>{
+      if(!d)return;
+      if(d.cmd==='ring'){ if(!armed){send({state:'notready'});return} if(!inCall)startCall() }
+      if(d.cmd==='stop'&&inCall)endCall('llamada finalizada');
+    });
+    c.on('close',()=>{$('conn').textContent='Mando desconectado. Esperando…'});
+  });
+  tpeer.on('disconnected',()=>{try{tpeer.reconnect()}catch(e){}});
+  tpeer.on('error',e=>{
+    if(e.type==='unavailable-id'){$('conn').textContent='Ya hay otra tablet con este código. Cambia el código o cierra la otra.';return}
+    setTimeout(()=>{try{tpeer.destroy()}catch(_){};startTablet()},3000);
+  });
+}
+
+/* ---------- MANDO: envía órdenes ---------- */
+let rpeer=null, rconn=null, rtimer=null;
+function startRemote(){
+  if(typeof Peer==='undefined'){$('tabInfo').textContent='No se pudo cargar la conexión. Revisa internet y recarga.';return}
+  rpeer=new Peer();
+  rpeer.on('open',()=>{tryConnect();rtimer=setInterval(()=>{if(!(rconn&&rconn.open))tryConnect()},3000)});
+  rpeer.on('disconnected',()=>{try{rpeer.reconnect()}catch(e){}});
+  rpeer.on('error',()=>{});
+}
+function tryConnect(){
+  if(!rpeer||rpeer.disconnected||rpeer.destroyed)return;
+  const c=rpeer.connect(PID(),{reliable:true});
+  c.on('open',()=>{rconn=c;$('tabInfo').textContent='Tablet conectada.'});
+  c.on('data',d=>{
+    const s=d&&d.state;
+    if(s==='ready')$('tabInfo').textContent='Tablet lista.';
+    if(s==='notready'){$('tabInfo').textContent='Tablet conectada, pero falta pulsar «Dejar lista».';$('status').textContent='La tablet no está lista.'}
+    if(s==='ringing')$('status').textContent='Sonando…';
+    if(s==='answered')$('status').textContent='Han contestado. Reproduciendo audio.';
+    if(s==='declined')$('status').textContent='Han rechazado. Volverá a sonar.';
+    if(s==='ended')$('status').textContent='Llamada terminada.';
+  });
+  c.on('close',()=>{if(rconn===c){rconn=null;$('tabInfo').textContent='Buscando la tablet…'}});
+}
+$('big').onclick=()=>{
+  if(rconn&&rconn.open){rconn.send({cmd:'ring'});$('status').textContent='Orden enviada…'}
+  else $('status').textContent='La tablet no está conectada todavía.';
+};
+$('stopBtn').onclick=()=>{if(rconn&&rconn.open)rconn.send({cmd:'stop'})};
+
+/* ---------- configuración guardada ---------- */
+const LS=k=>{try{return localStorage.getItem(k)}catch(e){return null}};
+const LSset=(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}};
+const idb=()=>new Promise((res,rej)=>{const r=indexedDB.open('hmoto',1);r.onupgradeneeded=()=>r.result.createObjectStore('f');r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)});
+const idbPut=async(k,v)=>{const d=await idb();return new Promise((res,rej)=>{const t=d.transaction('f','readwrite');t.objectStore('f').put(v,k);t.oncomplete=res;t.onerror=()=>rej(t.error)})};
+const idbGet=async k=>{const d=await idb();return new Promise((res,rej)=>{const q=d.transaction('f').objectStore('f').get(k);q.onsuccess=()=>res(q.result);q.onerror=()=>rej(q.error)})};
+const idbDel=async k=>{const d=await idb();return new Promise((res,rej)=>{const t=d.transaction('f','readwrite');t.objectStore('f').delete(k);t.oncomplete=res;t.onerror=()=>rej(t.error)})};
+async function exists(u){try{const r=await fetch(u,{method:'HEAD',cache:'no-store'});return r.ok&&!/text\/html/.test(r.headers.get('content-type')||'')}catch(e){return false}}
+
+$('code').value=LS('code')||'hellomoto2026';
+$('code').oninput=()=>LSset('code',$('code').value);
+$('nombre').value='Dr. House';
+
+async function loadConfig(){
+  const sv=await safe(()=>idbGet('voz')), sr=await safe(()=>idbGet('ring'));
+  if(sv){vozURL=URL.createObjectURL(sv);$('vozInfo').textContent='Guardado: '+(sv.name||'audio')}
+  else if(await exists('audio.mp3')){vozURL='audio.mp3';$('vozInfo').textContent='Usando audio.mp3 del repositorio'}
+  else{vozURL=null;$('vozInfo').textContent='Todavía no hay audio. Elige uno.'}
+  if(sr){ringURL=URL.createObjectURL(sr);$('ringInfo').textContent='Guardado: '+(sr.name||'tono')}
+  else if(await exists('tono.mp3')){ringURL='tono.mp3';$('ringInfo').textContent='Usando tono.mp3 del repositorio'}
+  else{ringURL=null;$('ringInfo').textContent='Sin tono propio: suena un tono de teléfono normal.'}
+  $('arm').disabled=!vozURL;
+}
+$('voz').onchange=async e=>{const f=e.target.files[0];if(f){await safe(()=>idbPut('voz',f));await loadConfig()}};
+$('ring').onchange=async e=>{const f=e.target.files[0];if(f){await safe(()=>idbPut('ring',f));await loadConfig()}};
+$('clear').onclick=async()=>{
+  if(!confirm('¿Borrar el audio y el tono guardados en esta tablet?'))return;
+  await safe(()=>idbDel('voz'));await safe(()=>idbDel('ring'));
+  $('voz').value='';$('ring').value='';await loadConfig();
+};
+const resetRole=()=>{LSset('rol','');location.href=location.pathname};
+$('chrole').onclick=resetRole;$('chrole2').onclick=resetRole;
+
+/* ---------- selección de papel ---------- */
+function pickTablet(){LSset('rol','tablet');show('setup');loadConfig();startTablet()}
+function pickRemote(){LSset('rol','mando');show('remote');startRemote()}
+$('pickTablet').onclick=pickTablet;
+$('pickRemote').onclick=pickRemote;
+const startRole=location.hash==='#tablet'?'tablet':location.hash==='#mando'?'mando':LS('rol');
+if(startRole==='tablet')pickTablet();
+else if(startRole==='mando')pickRemote();
+if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
+
+/* ---------- llamada ---------- */
+
+function startBeeps(){
+  ac=ac||new (window.AudioContext||window.webkitAudioContext)();
+  const burst=()=>{[0,0.35].forEach(d=>{
+    const o=ac.createOscillator(),o2=ac.createOscillator(),g=ac.createGain(),t=ac.currentTime+d;
+    o.frequency.value=440;o2.frequency.value=480;o.connect(g);o2.connect(g);g.connect(ac.destination);
+    g.gain.setValueAtTime(0,t);g.gain.linearRampToValueAtTime(.5,t+.02);g.gain.setValueAtTime(.5,t+.28);g.gain.linearRampToValueAtTime(0,t+.3);
+    o.start(t);o2.start(t);o.stop(t+.32);o2.stop(t+.32);});};
+  burst();ringTimer=setInterval(burst,2200);
+}
+function stopRing(){
+  clearInterval(ringTimer);ringTimer=null;
+  if(ringAudio){ringAudio.pause();ringAudio=null}
+  if(navigator.vibrate)navigator.vibrate(0);
+}
+function startCall(){
+  inCall=true;
+  $('callName').textContent='Dr. House';
+  $('callSub').textContent='llamada entrante…';
+  $('btns').style.display='flex';
+  show('call');
+  if(ringURL){ringAudio=new Audio(ringURL);ringAudio.loop=true;ringAudio.play().catch(()=>{})}
+  else startBeeps();
+  if(navigator.vibrate)navigator.vibrate([800,600,800,600,800,600,800]);
+  tell('ringing');
+}
+function endCall(msg){
+  stopRing();
+  if(vozAudio)vozAudio.pause();
+  $('btns').style.display='none';$('callSub').textContent=msg;
+  tell('ended');
+  setTimeout(()=>{inCall=false;testing?show('setup'):show('ready')},2000);
+}
+$('arm').onclick=async()=>{
+  ac=ac||new (window.AudioContext||window.webkitAudioContext)();ac.resume();
+  vozAudio=new Audio(vozURL);vozAudio.load();
+  testing=false;armed=true;show('ready');
+  tell('ready');
+  if(document.documentElement.requestFullscreen)document.documentElement.requestFullscreen().catch(()=>{});
+  if(navigator.wakeLock)wake=await safe(()=>navigator.wakeLock.request('screen'));
+};
+document.addEventListener('visibilitychange',async()=>{if(armed&&document.visibilityState==='visible'&&navigator.wakeLock)wake=await safe(()=>navigator.wakeLock.request('screen'))});
+$('test').onclick=()=>{
+  ac=ac||new (window.AudioContext||window.webkitAudioContext)();ac.resume();
+  if(vozURL)vozAudio=new Audio(vozURL);
+  testing=true;startCall();
+};
+let taps=[];
+$('ready').addEventListener('pointerdown',e=>{
+  if(e.clientX>120||e.clientY>120){taps=[];return}
+  const n=Date.now();taps=taps.filter(t=>n-t<1500);taps.push(n);
+  if(taps.length>=3){taps=[];if(!inCall)startCall()}
+});
+$('answer').onclick=()=>{
+  stopRing();
+  $('btns').style.display='none';
+  $('callSub').textContent='en llamada…';
+  tell('answered');
+  if(vozAudio){vozAudio.currentTime=0;vozAudio.play().catch(()=>{});vozAudio.onended=()=>endCall('llamada finalizada')}
+};
+$('decline').onclick=()=>{
+  stopRing();
+  $('callSub').textContent='llamada rechazada';$('btns').style.display='none';
+  tell('declined');
+  setTimeout(()=>{if(testing){inCall=false;show('setup')}else startCall()},5000);
+};
+</script>
+</body>
+</html>
